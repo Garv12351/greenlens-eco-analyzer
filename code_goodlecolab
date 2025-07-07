@@ -1,0 +1,138 @@
+"---" Defines different code blocks as this was coded in Google Colab
+
+# System lib for pyzbar
+!apt-get install -y libzbar0
+
+# Python libs
+!pip install -q pyzbar Pillow opencv-python requests pandas scikit-learn
+---
+
+from google.colab import files
+uploaded = files.upload()
+#upload csv file provided with repository
+
+---
+
+import pandas as pd
+
+df = pd.read_csv("openfood_clean_eco_large.csv", converters={
+    "ingredients_analysis_tags": eval,
+    "packaging_tags": eval,
+    "brands_tags": eval
+})
+
+print("✅ Loaded samples:", len(df))
+df.head()
+
+---
+
+import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import MultiLabelBinarizer
+
+# Load CSV again if needed
+df = pd.read_csv("openfood_clean_eco_large.csv", converters={
+    "ingredients_analysis_tags": eval,
+    "packaging_tags": eval,
+    "brands_tags": eval
+})
+
+X = df[["ingredients_analysis_tags", "packaging_tags", "brands_tags"]]
+y = df["ecoscore_grade"]
+
+# ✅ Wrapper for MultiLabelBinarizer that works inside ColumnTransformer
+class MultiLabelBinarizerTransformer(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        self.mlb = MultiLabelBinarizer()
+
+    def fit(self, X, y=None):
+        return self.mlb.fit(X)
+
+    def transform(self, X):
+        return self.mlb.transform(X)
+
+# ✅ Preprocessing and model pipeline
+preprocess = ColumnTransformer([
+    ("ing",   MultiLabelBinarizerTransformer(), "ingredients_analysis_tags"),
+    ("pack",  MultiLabelBinarizerTransformer(), "packaging_tags"),
+    ("brand", MultiLabelBinarizerTransformer(), "brands_tags")
+])
+
+model = Pipeline([
+    ("prep", preprocess),
+    ("clf", LogisticRegression(max_iter=1000, multi_class="multinomial"))
+])
+
+# ✅ Train the model
+model.fit(X, y)
+print("✅ Model trained. Accuracy:", round(model.score(X, y), 3))
+
+---
+
+uploaded = files.upload()
+filename = next(iter(uploaded))
+print(f"Uploaded: {filename}")
+
+---
+
+import cv2
+from pyzbar.pyzbar import decode
+import requests
+
+def get_barcode(file):
+    img = cv2.imread(file)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    codes = decode(gray)
+    if not codes:
+        raise ValueError("❌ No barcode found")
+    return codes[0].data.decode("utf-8")
+
+barcode = get_barcode(filename)
+print("✅ Barcode:", barcode)
+
+# Fetch product info from OFF
+def fetch_product(code):
+    url = f"https://world.openfoodfacts.org/api/v0/product/{code}.json"
+    resp = requests.get(url).json()
+    if resp["status"] == 0:
+        raise ValueError("❌ Product not found in OpenFoodFacts")
+    return resp["product"]
+
+product = fetch_product(barcode)
+print("✅ Product name:", product.get("product_name", "Unknown"))
+
+---
+
+def predict_ecoscore(product_json):
+    X_pred = pd.DataFrame([{
+        "ingredients_analysis_tags": product_json.get("ingredients_analysis_tags", []),
+        "packaging_tags": product_json.get("packaging_tags", []),
+        "brands_tags": product_json.get("brands_tags", []),
+    }])
+    grade = model.predict(X_pred)[0]
+    score_map = {"A": 100, "B": 85, "C": 70, "D": 55, "E": 40, "F": 25}
+    return score_map[grade], grade
+
+score, grade = predict_ecoscore(product)
+
+print(f"🤖 AI Eco-Score: {score}/100 → Grade {grade}")
+
+---
+
+from IPython.display import display, Markdown, Image as IPImage
+
+display(Markdown(f"## 🛍️ **{product.get('product_name', 'Unknown Product')}**"))
+if product.get("image_front_url"):
+    display(IPImage(url=product["image_front_url"]))
+
+display(Markdown(f"""
+### 🤖 **AI Eco-Score:** `{score}/100` → **Grade {grade}**
+
+**Packaging Tags**: {', '.join(product.get("packaging_tags", [])) or 'None'}
+**Ingredient Tags**: {', '.join(product.get("ingredients_analysis_tags", [])) or 'None'}
+**Brand Tags**: {', '.join(product.get("brands_tags", [])) or 'None'}
+"""))
+
