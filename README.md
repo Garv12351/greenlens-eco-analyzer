@@ -21,4 +21,8 @@ GreenLens is an AI-powered tool that helps users instantly check the environment
 - OpenCV, PyZbar, Pillow
 - Google Colab (demo notebook)
 - OpenFoodFacts API
-  
+
+---
+## Outputs
+![image](https://github.com/user-attachments/assets/9f1698c1-4fc6-47fe-acad-d1e1f5e8474c)
+
